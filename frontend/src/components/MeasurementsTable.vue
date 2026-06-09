@@ -1,118 +1,3 @@
-<template>
-  <v-container fluid>
-    <!-- Time filters -->
-    <v-row class="mb-1" dense align="center">
-      <v-col cols="12" sm="4" md="3">
-        <v-text-field
-          v-model="startInput"
-          label="Start"
-          type="datetime-local"
-          clearable
-          density="compact"
-          variant="outlined"
-          hide-details
-        />
-      </v-col>
-      <v-col cols="12" sm="4" md="3">
-        <v-text-field
-          v-model="endInput"
-          label="End"
-          type="datetime-local"
-          clearable
-          density="compact"
-          variant="outlined"
-          hide-details
-        />
-      </v-col>
-      <v-col cols="auto">
-        <v-btn-toggle
-          v-model="activePreset"
-          density="compact"
-          variant="outlined"
-          divided
-          mandatory="force"
-        >
-          <v-btn
-            v-for="preset in timePresets"
-            :key="preset.label"
-            :value="preset.label"
-            size="small"
-            @click="applyPreset(preset)"
-          >
-            {{ preset.label }}
-          </v-btn>
-        </v-btn-toggle>
-      </v-col>
-    </v-row>
-
-    <!-- Column filters -->
-    <v-row class="mb-1" dense>
-      <v-col
-        v-for="filter in columnFilters"
-        :key="filter.key"
-        cols="6"
-        sm="4"
-        md="2"
-      >
-        <v-text-field
-          v-model="filter.value"
-          :label="filter.label"
-          clearable
-          density="compact"
-          variant="outlined"
-          hide-details
-        >
-          <template #prepend-inner>
-            <v-select
-              v-model="filter.op"
-              :items="filterOps"
-              density="compact"
-              variant="plain"
-              hide-details
-              class="op-select"
-            />
-          </template>
-        </v-text-field>
-      </v-col>
-    </v-row>
-
-    <!-- Action buttons -->
-    <v-row class="mb-2" dense>
-      <v-col cols="auto" class="d-flex align-center ga-2">
-        <v-btn color="primary" @click="applyFilters">Apply</v-btn>
-        <v-btn variant="outlined" @click="resetFilters">Reset</v-btn>
-        <v-btn
-          variant="tonal"
-          prepend-icon="mdi-download"
-          :href="csvUrl"
-          target="_blank"
-        >
-          CSV
-        </v-btn>
-      </v-col>
-    </v-row>
-
-    <!-- Error alert -->
-    <v-alert v-if="error" type="error" closable class="mb-4" @click:close="error = ''">
-      {{ error }}
-    </v-alert>
-
-    <!-- Data table -->
-    <v-data-table-server
-      v-model:items-per-page="pageSize"
-      v-model:page="page"
-      v-model:sort-by="sortBy"
-      :headers="headers"
-      :items="items"
-      :items-length="total"
-      :loading="loading"
-      hover
-      density="compact"
-      @update:options="onOptionsUpdate"
-    />
-  </v-container>
-</template>
-
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import {
@@ -191,6 +76,8 @@ const timePresets: TimePreset[] = [
   { label: "All", hours: null },
 ];
 
+const drawer = ref(false);
+
 const items = ref<Measurement[]>([]);
 const total = ref(0);
 const page = ref(1);
@@ -256,6 +143,16 @@ function buildParams(): MeasurementParams {
 }
 
 const csvUrl = computed(() => buildCsvUrl(buildParams()));
+
+const activeFilterCount = computed(() => {
+  let count = 0;
+  if (startInput.value) count++;
+  if (endInput.value) count++;
+  for (const filter of columnFilters) {
+    if (filter.value) count++;
+  }
+  return count;
+});
 
 async function loadData() {
   const params = buildParams();
@@ -334,6 +231,155 @@ onMounted(() => {
   loadData();
 });
 </script>
+
+<template>
+  <v-container fluid>
+    <!-- Toolbar -->
+    <v-row class="mb-2" dense align="center">
+      <v-col cols="auto">
+        <v-btn
+          prepend-icon="mdi-filter-variant"
+          variant="tonal"
+          @click="drawer = !drawer"
+        >
+          Filters
+          <v-badge
+            v-if="activeFilterCount > 0"
+            :content="activeFilterCount"
+            color="primary"
+            inline
+            class="ml-1"
+          />
+        </v-btn>
+      </v-col>
+      <v-col cols="auto">
+        <v-btn
+          variant="tonal"
+          prepend-icon="mdi-download"
+          :href="csvUrl"
+          target="_blank"
+        >
+          CSV
+        </v-btn>
+      </v-col>
+      <v-spacer />
+      <v-col cols="auto" class="text-medium-emphasis text-body-2">
+        {{ total.toLocaleString() }} results
+      </v-col>
+    </v-row>
+
+    <!-- Error alert -->
+    <v-alert v-if="error" type="error" closable class="mb-4" @click:close="error = ''">
+      {{ error }}
+    </v-alert>
+
+    <!-- Data table -->
+    <v-data-table-server
+      v-model:items-per-page="pageSize"
+      v-model:page="page"
+      v-model:sort-by="sortBy"
+      :headers="headers"
+      :items="items"
+      :items-length="total"
+      :loading="loading"
+      hover
+      density="compact"
+      @update:options="onOptionsUpdate"
+    />
+
+    <!-- Filter drawer -->
+    <v-navigation-drawer
+      v-model="drawer"
+      location="right"
+      temporary
+      width="340"
+    >
+      <v-toolbar density="compact" flat>
+        <v-toolbar-title class="text-subtitle-1">Filters</v-toolbar-title>
+        <v-spacer />
+        <v-btn icon="mdi-close" variant="text" size="small" @click="drawer = false" />
+      </v-toolbar>
+
+      <v-container class="pt-4">
+        <!-- Time range section -->
+        <div class="text-overline mb-2">Time Range</div>
+
+        <v-btn-toggle
+          v-model="activePreset"
+          density="compact"
+          variant="outlined"
+          divided
+          class="mb-3 flex-wrap"
+        >
+          <v-btn
+            v-for="preset in timePresets"
+            :key="preset.label"
+            :value="preset.label"
+            size="small"
+            @click="applyPreset(preset)"
+          >
+            {{ preset.label }}
+          </v-btn>
+        </v-btn-toggle>
+
+        <v-text-field
+          v-model="startInput"
+          label="Start"
+          type="datetime-local"
+          clearable
+          density="compact"
+          variant="outlined"
+          hide-details
+          class="mb-3"
+        />
+        <v-text-field
+          v-model="endInput"
+          label="End"
+          type="datetime-local"
+          clearable
+          density="compact"
+          variant="outlined"
+          hide-details
+          class="mb-5"
+        />
+
+        <!-- Column filters section -->
+        <div class="text-overline mb-2">Column Filters</div>
+
+        <div v-for="filter in columnFilters" :key="filter.key" class="mb-3">
+          <v-text-field
+            v-model="filter.value"
+            :label="filter.label"
+            clearable
+            density="compact"
+            variant="outlined"
+            hide-details
+          >
+            <template #prepend-inner>
+              <v-select
+                v-model="filter.op"
+                :items="filterOps"
+                density="compact"
+                variant="plain"
+                hide-details
+                class="op-select"
+              />
+            </template>
+          </v-text-field>
+        </div>
+
+        <!-- Drawer actions -->
+        <v-divider class="mb-4" />
+        <v-btn color="primary" block class="mb-2" @click="applyFilters(); drawer = false">
+          Apply
+        </v-btn>
+        <v-btn variant="outlined" block @click="resetFilters">
+          Reset
+        </v-btn>
+      </v-container>
+    </v-navigation-drawer>
+  </v-container>
+</template>
 
 <style scoped>
 .op-select {

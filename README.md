@@ -86,7 +86,6 @@ C:\Users\WWICGAA\.local\bin\uv.exe run flask --app wsgi run --debug --port 8000
 # seperate terminal
 cd frontend
 npm run dev
-
 # visit http://localhost:5173
 
 
