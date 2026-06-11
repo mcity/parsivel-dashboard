@@ -32,6 +32,42 @@ export interface MeasurementParams {
   [key: string]: string | number | undefined; // column filters like rainIntensity__gte
 }
 
+// One aggregated time bucket for the hyetograph (see /measurements/ott/series).
+export interface SeriesPoint {
+  bucket: string;
+  rainMm: number;
+  peakIntensity: number | null;
+  wxCode: number | null;
+  cumulative: number;
+}
+
+export interface SeriesResponse {
+  bucketSeconds: number;
+  points: SeriesPoint[];
+}
+
+export interface SeriesParams {
+  start?: string;
+  end?: string;
+  bucket?: number; // bucket width in seconds; omit to let the server auto-pick
+  view?: "table" | "chart"; // "chart" enforces 1-year max on backend
+}
+
+export async function fetchSeries(params: SeriesParams = {}): Promise<SeriesResponse> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      query.set(key, String(value));
+    }
+  }
+  const res = await fetch(`${BASE}/measurements/ott/series?${query}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.message ?? res.statusText);
+  }
+  return res.json();
+}
+
 export async function fetchMeasurements(
   params: MeasurementParams = {}
 ): Promise<MeasurementPage> {
@@ -42,6 +78,15 @@ export async function fetchMeasurements(
     }
   }
   const res = await fetch(`${BASE}/measurements/ott?${query}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.message ?? res.statusText);
+  }
+  return res.json();
+}
+
+export async function fetchLatest(): Promise<Measurement> {
+  const res = await fetch(`${BASE}/measurements/ott/latest`);
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new Error(body?.message ?? res.statusText);

@@ -7,11 +7,7 @@
     </v-app-bar>
 
     <v-main>
-      <MeasurementsTable />
+      <router-view />
     </v-main>
   </v-app>
 </template>
-
-<script setup lang="ts">
-import MeasurementsTable from "./components/MeasurementsTable.vue";
-</script>

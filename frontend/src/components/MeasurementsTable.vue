@@ -2,10 +2,16 @@
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import {
   fetchMeasurements,
+  fetchSeries,
+  fetchLatest,
   buildCsvUrl,
   type Measurement,
   type MeasurementParams,
+  type SeriesPoint,
 } from "../api";
+import HyetographChart from "./HyetographChart.vue";
+import WeatherFrequencyChart from "./WeatherFrequencyChart.vue";
+import { columnTooltips, uiTooltips, timeRangeTooltip, type ColumnTooltipKey } from "../tooltips";
 
 // --- URL sync helpers ---
 function readUrlParams(): URLSearchParams {
@@ -27,7 +33,7 @@ const headers = [
   { title: "Timestamp", key: "cpuTimestamp", sortable: true },
   { title: "Serial No.", key: "sensorSerNo", sortable: true },
   { title: "Rain Intensity (mm/h)", key: "rainIntensity", sortable: true },
-  { title: "Rain Amt (mm)", key: "rainAmt", sortable: true },
+  { title: "Rain Amount (mm)", key: "rainAmt", sortable: true },
   { title: "Wx Code (SYNOP)", key: "wxCode", sortable: true },
   { title: "Reflectivity (dBZ)", key: "radarReflectivity", sortable: true },
   { title: "Visibility (m)", key: "MORvisibility", sortable: true },
@@ -37,6 +43,17 @@ const headers = [
   { title: "Particles", key: "particleCount", sortable: true },
   { title: "Status", key: "sensorStatusText", sortable: false },
 ];
+
+// A few header keys differ from the raw field name the tooltip is keyed by.
+const headerTooltipKeys: Record<string, ColumnTooltipKey> = {
+  sensorStatusText: "sensorStatus",
+};
+
+function tooltipFor(key: string | null): string {
+  if (!key) return "";
+  const tipKey = (headerTooltipKeys[key] ?? key) as ColumnTooltipKey;
+  return columnTooltips[tipKey] ?? "";
+}
 
 const filterOps = [
   { title: "=", value: "eq" },
@@ -73,6 +90,8 @@ const timePresets: TimePreset[] = [
   { label: "24h", hours: 24 },
   { label: "7d", hours: 24 * 7 },
   { label: "30d", hours: 24 * 30 },
+  { label: "180d", hours: 24 * 180 },
+  { label: "1y", hours: 24 * 365 },
   { label: "All", hours: null },
 ];
 
@@ -88,9 +107,28 @@ const sortBy = ref<{ key: string; order: "asc" | "desc" }[]>([
 const loading = ref(false);
 const error = ref("");
 
+const viewMode = ref<"table" | "chart">("chart");
+const chartSeries = ref<SeriesPoint[]>([]);
+const chartBucketSeconds = ref(0);
+const chartLoading = ref(false);
+
 const startInput = ref("");
 const endInput = ref("");
 const activePreset = ref<string | null>(null);
+
+// Most recent measurement timestamp; presets are measured back from this.
+const latestTimestamp = ref("");
+const latestTimestampLabel = computed(() =>
+  latestTimestamp.value ? new Date(latestTimestamp.value).toLocaleString() : ""
+);
+
+async function loadLatestTimestamp() {
+  try {
+    latestTimestamp.value = (await fetchLatest()).cpuTimestamp ?? "";
+  } catch {
+    latestTimestamp.value = "";
+  }
+}
 
 function toIso(datetimeLocal: string): string {
   // datetime-local gives "YYYY-MM-DDTHH:MM", API expects full ISO
@@ -102,15 +140,25 @@ function toDatetimeLocal(iso: string): string {
   return iso ? iso.slice(0, 16) : "";
 }
 
+// Format a Date as "YYYY-MM-DDTHH:MM" using local components (no UTC shift).
+function formatDatetimeLocal(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
 function applyPreset(preset: TimePreset) {
   if (preset.hours === null) {
     startInput.value = "";
     endInput.value = "";
   } else {
-    const now = new Date();
-    const start = new Date(now.getTime() - preset.hours * 3600_000);
-    endInput.value = toDatetimeLocal(now.toISOString().slice(0, 19));
-    startInput.value = toDatetimeLocal(start.toISOString().slice(0, 19));
+    // Anchor on the latest available measurement, not the user's clock.
+    const anchor = latestTimestamp.value ? new Date(latestTimestamp.value) : new Date();
+    const start = new Date(anchor.getTime() - preset.hours * 3600_000);
+    endInput.value = formatDatetimeLocal(anchor);
+    startInput.value = formatDatetimeLocal(start);
   }
   page.value = 1;
   loadData();
@@ -170,7 +218,42 @@ async function loadData() {
   } finally {
     loading.value = false;
   }
+
+  if (viewMode.value === "chart") {
+    loadChartData();
+  }
 }
+
+async function loadChartData() {
+  // The chart pulls a server-side aggregated series (one request, ~hundreds of
+  // points) instead of paging through raw rows. Column filters are intentionally
+  // not applied here — they'd punch gaps in the accumulation; only the time
+  // range narrows the chart.
+  chartLoading.value = true;
+  try {
+    const startIso = toIso(startInput.value);
+    const endIso = toIso(endInput.value);
+    const data = await fetchSeries({
+      ...(startIso ? { start: startIso } : {}),
+      ...(endIso ? { end: endIso } : {}),
+    });
+    chartSeries.value = data.points;
+    chartBucketSeconds.value = data.bucketSeconds;
+  } catch (e: any) {
+    error.value = e.message;
+    chartSeries.value = [];
+    chartBucketSeconds.value = 0;
+  } finally {
+    chartLoading.value = false;
+  }
+}
+
+watch(viewMode, (mode) => {
+  if (mode === "chart") {
+    loadChartData();
+  }
+});
+
 
 function applyFilters() {
   page.value = 1;
@@ -228,6 +311,7 @@ function restoreFromUrl() {
 
 onMounted(() => {
   restoreFromUrl();
+  loadLatestTimestamp();
   loadData();
 });
 </script>
@@ -266,6 +350,16 @@ onMounted(() => {
       <v-col cols="auto" class="text-medium-emphasis text-body-2">
         {{ total.toLocaleString() }} results
       </v-col>
+      <v-col cols="auto">
+        <v-btn-toggle v-model="viewMode" mandatory density="compact" variant="outlined">
+          <v-btn value="table" size="small">
+            <v-icon>mdi-table</v-icon>
+          </v-btn>
+          <v-btn value="chart" size="small">
+            <v-icon>mdi-chart-bar</v-icon>
+          </v-btn>
+        </v-btn-toggle>
+      </v-col>
     </v-row>
 
     <!-- Error alert -->
@@ -275,6 +369,7 @@ onMounted(() => {
 
     <!-- Data table -->
     <v-data-table-server
+      v-if="viewMode === 'table'"
       v-model:items-per-page="pageSize"
       v-model:page="page"
       v-model:sort-by="sortBy"
@@ -285,7 +380,80 @@ onMounted(() => {
       hover
       density="compact"
       @update:options="onOptionsUpdate"
-    />
+    >
+      <template
+        v-for="h in headers"
+        :key="h.key"
+        #[`header.${h.key}`]="{ column, getSortIcon, isSorted, toggleSort }"
+      >
+        <span class="d-inline-flex align-center column-header">
+          <span
+            v-if="column.sortable"
+            class="d-inline-flex align-center cursor-pointer"
+            @click="toggleSort(column)"
+          >
+            {{ column.title }}
+            <v-icon
+              v-if="isSorted(column)"
+              :icon="getSortIcon(column)"
+              size="small"
+              class="ml-1"
+            />
+          </span>
+          <span v-else>{{ column.title }}</span>
+          <v-tooltip
+            v-if="tooltipFor(column.key)"
+            :text="tooltipFor(column.key)"
+            location="top"
+            max-width="320"
+          >
+            <template #activator="{ props }">
+              <v-icon
+                v-bind="props"
+                icon="mdi-information-outline"
+                size="x-small"
+                class="ml-1 text-medium-emphasis info-icon"
+              />
+            </template>
+          </v-tooltip>
+        </span>
+      </template>
+    </v-data-table-server>
+
+    <!-- Chart view -->
+    <v-row v-if="viewMode === 'chart'" class="mt-1">
+      <v-col cols="7">
+        <v-card>
+          <v-card-title class="text-subtitle-1">Hyetograph</v-card-title>
+          <v-card-text>
+            <v-progress-linear v-if="chartLoading" indeterminate color="primary" class="my-8" />
+            <HyetographChart
+              v-else-if="chartSeries.length > 0"
+              :points="chartSeries"
+              :bucket-seconds="chartBucketSeconds"
+            />
+            <div v-else class="text-medium-emphasis text-center py-8">
+              No data available for the current filters.
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+      <v-col cols="5">
+        <v-card class="fill-height d-flex flex-column" min-height="460">
+          <v-card-title class="text-subtitle-1">Weather Distribution</v-card-title>
+          <v-card-text class="flex-grow-1 d-flex flex-column">
+            <div v-if="chartSeries.length === 0" class="text-medium-emphasis text-center flex-grow-1 d-flex align-center justify-center">
+              No data available for the current filters.
+            </div>
+            <WeatherFrequencyChart
+              v-else
+              :points="chartSeries"
+              :bucket-seconds="chartBucketSeconds"
+            />
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
 
     <!-- Filter drawer -->
     <v-navigation-drawer
@@ -302,7 +470,19 @@ onMounted(() => {
 
       <v-container class="pt-4">
         <!-- Time range section -->
-        <div class="text-overline mb-2">Time Range</div>
+        <div class="text-overline mb-2 d-inline-flex align-center">
+          Time Range
+          <v-tooltip :text="timeRangeTooltip(latestTimestampLabel)" location="top" max-width="320">
+            <template #activator="{ props }">
+              <v-icon
+                v-bind="props"
+                icon="mdi-information-outline"
+                size="x-small"
+                class="ml-1 info-icon"
+              />
+            </template>
+          </v-tooltip>
+        </div>
 
         <v-btn-toggle
           v-model="activePreset"
@@ -345,6 +525,17 @@ onMounted(() => {
 
         <!-- Column filters section -->
         <div class="text-overline mb-2">Column Filters</div>
+
+        <v-alert
+          v-if="viewMode === 'chart'"
+          type="info"
+          variant="tonal"
+          density="compact"
+          class="mb-3 text-caption"
+          icon="mdi-information-outline"
+        >
+          {{ uiTooltips.chartFilters }}
+        </v-alert>
 
         <div v-for="filter in columnFilters" :key="filter.key" class="mb-3">
           <v-text-field
@@ -390,5 +581,15 @@ onMounted(() => {
   padding: 0;
   min-height: unset;
   font-size: 0.85rem;
+}
+.cursor-pointer {
+  cursor: pointer;
+}
+.info-icon {
+  opacity: 0.6;
+  cursor: help;
+}
+.info-icon:hover {
+  opacity: 1;
 }
 </style>

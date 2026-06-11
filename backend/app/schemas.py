@@ -63,3 +63,18 @@ class HealthPoint(BaseModel):
     sensorStatusText: str | None
     laserAmplitude: int | None
     particleCount: int | None
+
+
+class SeriesPoint(BaseModel):
+    """One time-bucket of aggregated rainfall for the hyetograph."""
+
+    bucket: datetime          # bucket start (floored timestamp)
+    rainMm: float             # rain accumulated in this bucket (rollover-corrected ΔrainAmt)
+    peakIntensity: float | None = None  # max rainIntensity (mm/h) in the bucket
+    wxCode: int | None = None  # most-severe SYNOP code in the bucket
+    cumulative: float          # running total of rainMm across the selected range
+
+
+class SeriesOut(BaseModel):
+    bucketSeconds: int         # bucket width chosen for this range
+    points: list[SeriesPoint]

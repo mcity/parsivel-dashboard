@@ -31,6 +31,7 @@ SENSOR_STATUS_TEXT: dict[int, str] = {
 
 FILL_VALUE_FLOAT = -9.999
 MOR_CLEAR_VALUE = 20000  # MORvisibility value indicating clear / no precip
+RAIN_AMT_ROLLOVER_MM = 300.0  # rainAmt accumulator wraps back to 0 at this value
 
 # Columns that can be filtered/sorted — maps name to the SQLAlchemy column.
 FILTERABLE_COLUMNS = {
@@ -61,3 +62,17 @@ CSV_COLUMNS = [
     "radarReflectivity", "MORvisibility", "kineticEnergy", "housingTemp",
     "laserAmplitude", "particleCount", "sensorStatus", "sensorStatusText",
 ]
+
+# WEATHER_CAT = 
+#   if (code === null) return { label: "No data", color: "#616161" };
+#   if (code === 0) return { label: "Clear", color: "#424242" };
+#   if (code >= 51 && code <= 53) return { label: "Drizzle", color: "#90caf9" };
+#   if (code >= 57 && code <= 58) return { label: "Drizzle with rain", color: "#4fc3f7" };
+#   if (code >= 61 && code <= 63) return { label: "Rain", color: "#1e88e5" };
+#   if (code >= 67 && code <= 68) return { label: "Rain/snow mix", color: "#7e57c2" };
+#   if (code >= 71 && code <= 73) return { label: "Snow", color: "#e0e0e0" };
+#   if (code === 77) return { label: "Snow grains", color: "#b0bec5" };
+#   if (code >= 87 && code <= 88) return { label: "Soft hail", color: "#ff9800" };
+#   if (code === 89) return { label: "Hail", color: "#ff5722" };
+#   return { label: `Code ${code}`, color: "#757575" };
+# }
