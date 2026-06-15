@@ -8,7 +8,7 @@ from flask import Blueprint, Response, abort, request
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import ColumnElement
-from sqlalchemy.types import DateTime
+from sqlalchemy.types import DateTime, Integer
 
 from app.db import get_session
 from app.models import ParsivelOTT
@@ -20,8 +20,10 @@ from app.constants import (
     CSV_COLUMNS,
     MOR_CLEAR_VALUE,
     RAIN_AMT_ROLLOVER_MM,
+    WRAP_REACH_MARGIN_MM,
     FILL_VALUE_FLOAT,
     SENSOR_STATUS_TEXT,
+    WEATHER_CATEGORIES
 )
 
 bp = Blueprint("measurements", __name__, url_prefix="/api")
@@ -62,6 +64,31 @@ def _compile_bucket_sqlite(element, compiler, **kw):
 def _compile_bucket_default(element, compiler, **kw):
     # Unknown dialect: fall back to no bucketing (each row is its own bucket).
     return compiler.process(element.col, **kw)
+
+
+# Seconds since a fixed epoch. Used only via subtraction (gap between two rows),
+# so the dialect-specific epoch anchor cancels out.
+class _EpochSeconds(ColumnElement):
+    type = Integer()
+    inherit_cache = True
+
+    def __init__(self, col):
+        self.col = col
+
+
+@compiles(_EpochSeconds, "mssql")
+def _compile_epoch_mssql(element, compiler, **kw):
+    return f"DATEDIFF(SECOND, '2000-01-01', {compiler.process(element.col, **kw)})"
+
+
+@compiles(_EpochSeconds, "sqlite")
+def _compile_epoch_sqlite(element, compiler, **kw):
+    return f"CAST(strftime('%s', {compiler.process(element.col, **kw)}) AS INTEGER)"
+
+
+@compiles(_EpochSeconds)
+def _compile_epoch_default(element, compiler, **kw):
+    raise NotImplementedError("_EpochSeconds: unsupported dialect")
 
 
 # Bucket widths (seconds) we'll snap to, smallest first. We pick the smallest
@@ -171,13 +198,20 @@ def _resolve_bucket(start_dt, end_dt, override):
 def _series_query(start_dt, end_dt, bucket_seconds):
     """Time-bucketed rainfall aggregate, computed entirely in the database.
 
-    rainMm per bucket is the sum of consecutive ΔrainAmt with the 300 mm
-    accumulator roll-over corrected (a negative step means it wrapped). The
-    first sample in the window has no predecessor, so it contributes nothing.
+    rainMm per bucket is the sum of consecutive ΔrainAmt. A negative step is
+    treated as a 300 mm accumulator wrap *only* when the rain rate over the gap
+    could plausibly have driven the accumulator past 300
+    (prev_amt + intensity * gap_hours >= 300 - margin); otherwise it's an
+    accumulator reset and contributes nothing. The first sample in the window
+    has no predecessor, so it contributes nothing.
     """
     ts = ParsivelOTT.cpuTimestamp
     bucket = _TimeBucket(ts, bucket_seconds).label("bucket")
     prev_amt = func.lag(ParsivelOTT.rainAmt).over(order_by=ts)
+    # Seconds since the previous sample (epoch anchor cancels in the subtraction).
+    epoch = _EpochSeconds(ts)
+    gap_seconds = epoch - func.lag(epoch).over(order_by=ts)
+    eff_intensity = ParsivelOTT.rainIntensity
 
     base = (
         select(
@@ -185,6 +219,9 @@ def _series_query(start_dt, end_dt, bucket_seconds):
             ParsivelOTT.rainIntensity.label("intensity"),
             ParsivelOTT.wxCode.label("wx"),
             (ParsivelOTT.rainAmt - prev_amt).label("raw_delta"),
+            # Highest the accumulator could have reached over the gap: if it
+            # clears 300, a wrap was physically possible.
+            (prev_amt + eff_intensity * gap_seconds / 3600.0).label("reach"),
         )
         .where(ParsivelOTT.cpuTimestamp >= start_dt)
         .where(ParsivelOTT.cpuTimestamp <= end_dt)
@@ -192,10 +229,14 @@ def _series_query(start_dt, end_dt, bucket_seconds):
         .cte("base")
     )
 
-    # Negative delta => the accumulator rolled past 300 mm; add it back.
     corrected = case(
-        (base.c.raw_delta < 0, base.c.raw_delta + RAIN_AMT_ROLLOVER_MM),
-        else_=base.c.raw_delta,
+        (base.c.raw_delta >= 0, base.c.raw_delta),  # normal accumulation
+        # Negative step that could have reached 300 => genuine wrap; add it back.
+        (
+            base.c.reach >= RAIN_AMT_ROLLOVER_MM - WRAP_REACH_MARGIN_MM,
+            base.c.raw_delta + RAIN_AMT_ROLLOVER_MM,
+        ),
+        else_=0.0,  # negative but unreachable => accumulator reset; ignore.
     )
 
     agg = (
@@ -219,6 +260,10 @@ def _series_query(start_dt, end_dt, bucket_seconds):
         )
         .order_by(agg.c.bucket)
     )
+    
+def _count(session, *predicates) -> int:
+    q = select(func.count()).select_from(ParsivelOTT).where(*predicates)
+    return session.scalar(q) or 0
 
 # Endpoint: JSON get req return for latest measurement
 @bp.get("/measurements/ott/latest")
@@ -282,10 +327,10 @@ def series_ott():
     if start_dt is None or end_dt is None:
         return SeriesOut(bucketSeconds=0, points=[]).model_dump(mode="json")
 
-    # Chart view has a 1-year (365-day) limit.
+    # Chart view has a 1-year (366-day) limit for one year (366 b/c leap year).
     if start_dt and end_dt:
         span_days = (end_dt - start_dt).days
-        if span_days > 365:
+        if span_days > 366:
             abort(400, description=f"Chart view: time range ({span_days} days) exceeds 1 year maximum. Narrow the date range to load the chart.")
 
     bucket_seconds = _resolve_bucket(start_dt, end_dt, request.args.get("bucket"))
@@ -294,10 +339,10 @@ def series_ott():
     points = [
         SeriesPoint(
             bucket=r.bucket,
-            rainMm=round(float(r.rain_mm or 0.0), 3),
-            peakIntensity=_nullify_fill(r.peak_intensity),
+            rainMm=round(float(r.rain_mm or 0.0), 5),
+            peakIntensity=round(_nullify_fill(r.peak_intensity), 5),
             wxCode=r.wx_code,
-            cumulative=round(float(r.cumulative or 0.0), 3),
+            cumulative=round(float(r.cumulative or 0.0), 5),
         )
         for r in rows
     ]
@@ -307,34 +352,39 @@ def series_ott():
 @bp.get("/measurements/ott/weather")
 def weather_distr_ott():
     session = get_session()
-    start_dt, end_dt = _parse_time_bounds()
-
-    # Missing bound(s) ("All") -> span the full data extent (cheap, indexed).
-    if start_dt is None or end_dt is None:
-        lo, hi = session.execute(
-            select(func.min(ParsivelOTT.cpuTimestamp), func.max(ParsivelOTT.cpuTimestamp))
-        ).one()
-        start_dt = start_dt or lo
-        end_dt = end_dt or hi
-
-    # Empty table -> empty series (200), so the chart degrades gracefully.
-    if start_dt is None or end_dt is None:
-        return SeriesOut(bucketSeconds=0, points=[]).model_dump(mode="json")
-
-    bucket_seconds = _resolve_bucket(start_dt, end_dt, request.args.get("bucket"))
-    rows = session.execute(_series_query(start_dt, end_dt, bucket_seconds)).all()
-
-    points = [
-        SeriesPoint(
-            bucket=r.bucket,
-            rainMm=round(float(r.rain_mm or 0.0), 3),
-            peakIntensity=_nullify_fill(r.peak_intensity),
-            wxCode=r.wx_code,
-            cumulative=round(float(r.cumulative or 0.0), 3),
-        )
-        for r in rows
-    ]
-    return SeriesOut(bucketSeconds=bucket_seconds, points=points).model_dump(mode="json")
+    start_dt, end_dt = _parse_time_bounds() 
+    
+    results = []
+    
+    for name, bounds in WEATHER_CATEGORIES:
+        
+        # filter based on time and bounds of current category
+        filters = [ParsivelOTT.wxCode.between(bounds[0], bounds[1])]
+        if start_dt: 
+            filters.append(ParsivelOTT.cpuTimestamp >= start_dt)
+        if end_dt:   
+            filters.append(ParsivelOTT.cpuTimestamp <= end_dt)
+        
+        minutes = _count(session, *filters)
+        
+        # corrected_percip_min = None
+        
+        # # add corrected percip if there is any
+        # if name == "Clear":
+        #     corrected_percip_min = 0
+        #     PRECIP = ParsivelOTT.rainIntensity > 0
+        #     corrected_percip_min = _count(session, *filters, PRECIP)  # clear-coded but raining
+        #     minutes -= corrected_percip_min                            # actually clear
+                
+        results.append({"label": name, "minutes": minutes})
+        
+        # if corrected_percip_min is not None:
+        #     results.append({
+        #         "label": "Precipitation (corrected)",
+        #         "minutes": corrected_percip_min,
+        #     })
+        
+    return {"categories": results}
 
 # Endpoint: CSV exporter from query
 @bp.get("/measurements/ott/csv")

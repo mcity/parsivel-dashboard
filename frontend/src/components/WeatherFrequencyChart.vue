@@ -11,9 +11,9 @@ import {
   Legend,
 } from "chart.js";
 import { Bar } from "vue-chartjs";
-import type { SeriesPoint } from "../api";
-import { categoryForPoint } from "../weather";
 import { uiTooltips } from "../tooltips";
+import type { WeatherCategory } from "../api";
+import { colorForLabel } from "../weather";
 
 ChartJS.register(
   BarController,
@@ -25,54 +25,28 @@ ChartJS.register(
   Legend
 );
 
-const props = defineProps<{
-  points: SeriesPoint[];
-  bucketSeconds: number;
-}>();
+const props = defineProps<{ categories: WeatherCategory[] }>();
 
-// Time spent in each weather category. Each bucket covers `bucketSeconds` of
-// elapsed time, so weighting by bucket width gives a zoom-invariant duration
-// rather than a raw bucket count (which would swing wildly with the server's
-// auto-chosen bucket size).
-const weatherDuration = computed(() => {
-  const totals = new Map<string, { seconds: number; color: string }>();
-  for (const p of props.points) {
-    const cat = categoryForPoint(p);
-    if (!totals.has(cat.label)) {
-      totals.set(cat.label, { seconds: 0, color: cat.color });
-    }
-    totals.get(cat.label)!.seconds += props.bucketSeconds;
-  }
-  return Array.from(totals.entries())
-    .sort((a, b) => b[1].seconds - a[1].seconds)
-    .map(([label, data]) => ({
-      label,
-      seconds: data.seconds,
-      hours: data.seconds / 3600,
-      color: data.color,
-    }));
-});
-
-// Compact, human-readable duration for the tooltip: "3d 4h", "5h 30m", "45m".
-function formatDuration(seconds: number): string {
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
+// Compact, human-readable duration for the tooltip: "years, months, days, hours, minutes".
+const UNITS: [string, number][] = [["y",525600],["mo",43200],["d",1440],["h",60],["m",1]];
+function formatDuration(minutes: number): string {
+  let rem = Math.round(minutes);
   const parts: string[] = [];
-  if (d) parts.push(`${d}d`);
-  if (h) parts.push(`${h}h`);
-  if (m && !d) parts.push(`${m}m`);
-  return parts.length ? parts.join(" ") : `${seconds}s`;
+  for (const [name, size] of UNITS) {
+    const n = Math.floor(rem / size);
+    if (n) { parts.push(`${n}${name}`); rem -= n * size; }
+  }
+  return parts.length ? parts.slice(0, 2).join(" ") : "0m";  // top 2 units
 }
 
 const chartData = computed(() => ({
-  labels: weatherDuration.value.map((w) => w.label),
+  labels: props.categories.map(c => c.label),
   datasets: [
     {
       label: "Time",
-      data: weatherDuration.value.map((w) => w.hours),
-      backgroundColor: weatherDuration.value.map((w) => w.color),
-      borderColor: weatherDuration.value.map((w) => w.color),
+      data: props.categories.map(c => c.minutes / 60 / 24),
+      backgroundColor: props.categories.map(c => colorForLabel(c.label)),
+      borderColor: props.categories.map(c => colorForLabel(c.label)),
       borderWidth: 1,
     },
   ],
@@ -82,16 +56,21 @@ const chartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   indexAxis: "y" as const,
+  interaction: {
+    mode: "index" as const,   // resolve by category row, not the bar shape
+    intersect: false,         // don't require hovering the (tiny) bar itself
+    axis: "y" as const,       // pick the row by vertical position (horizontal bars)
+  },
   plugins: {
     legend: {
       display: false,
     },
     tooltip: {
       callbacks: {
-        // Show a friendly duration ("2d 5h") instead of the raw hours value.
+        // Show a readable duration ("2d 5h") instead of minute values.
         label: (item: any) => {
-          const w = weatherDuration.value[item.dataIndex];
-          return w ? formatDuration(w.seconds) : "";
+          const w = props.categories[item.dataIndex]; 
+          return w ? formatDuration(w.minutes) : ""
         },
       },
     },
@@ -99,7 +78,7 @@ const chartOptions = {
   scales: {
     x: {
       beginAtZero: true,
-      title: { display: true, text: "Hours", color: "#aaa" },
+      title: { display: true, text: "Days", color: "#aaa" },
       ticks: { color: "#aaa" },
       grid: { color: "rgba(255,255,255,0.1)" },
     },

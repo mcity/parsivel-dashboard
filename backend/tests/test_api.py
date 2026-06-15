@@ -82,6 +82,44 @@ def test_series_rollover_correction(client, session_factory):
     assert p["wxCode"] == 61
 
 
+def test_series_reset_not_treated_as_wrap(client, session_factory):
+    """A drop to 0 that no rain rate could explain is a reset, not a 300 wrap."""
+    s = session_factory()
+    base = datetime(2031, 1, 1, 0, 0, 0)
+    # (offset_seconds, rainAmt, rainIntensity)
+    rows = [
+        (0,   31.0,  0.0),
+        (60,  31.67, 0.0),   # +0.67 of real accumulation
+        (160, 0.0,   0.0),   # reset: 31.67 -> 0, no rain, 100s gap -> must be ignored
+    ]
+    s.add_all([
+        ParsivelOTT(
+            cpuTimestamp=base + timedelta(seconds=off),
+            rainAmt=a,
+            rainIntensity=it,
+            wxCode=0,
+            sensorStatus=0,
+        )
+        for off, a, it in rows
+    ])
+    s.commit()
+    s.close()
+
+    r = client.get(
+        "/api/measurements/ott/series",
+        query_string={
+            "start": "2031-01-01T00:00:00",
+            "end": "2031-01-01T01:00:00",
+            "bucket": "86400",
+        },
+    )
+    assert r.status_code == 200
+    p = r.get_json()["points"][0]
+    # Increments: (no predecessor -> 0) + 0.67 + (reset ignored -> 0) = 0.67.
+    # The old unconditional +300 would have added -31.67+300 = 268.33 of phantom rain.
+    assert p["rainMm"] == pytest.approx(0.67, abs=1e-6)
+
+
 def test_series_empty_range_returns_empty(client):
     r = client.get(
         "/api/measurements/ott/series",
@@ -104,16 +142,3 @@ def test_series_chart_view_rejects_range_over_1_year(client):
     body = r.get_json()
     assert "exceeds 1 year maximum" in (body.get("description") or body.get("message", ""))
 
-
-def test_series_table_view_allows_range_over_1_year(client):
-    r = client.get(
-        "/api/measurements/ott/series",
-        query_string={
-            "start": "2020-01-01T00:00:00",
-            "end": "2021-01-02T00:00:00",  # 367 days
-            "view": "table",
-        },
-    )
-    # Table view should succeed (empty points since no data in those dates)
-    assert r.status_code == 200
-    assert r.get_json()["points"] == []

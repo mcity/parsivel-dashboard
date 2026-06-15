@@ -53,6 +53,33 @@ export interface SeriesParams {
   view?: "table" | "chart"; // "chart" enforces 1-year max on backend
 }
 
+export interface WeatherCategory { 
+  label: string; 
+  minutes: number;
+}
+
+export interface WeatherDistribution { 
+  categories: WeatherCategory[];
+}
+
+export async function fetchWeather(
+  params: { start?: string; end?: string } = {}
+): Promise<WeatherDistribution> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      query.set(key, String(value));
+    }
+  }
+  const res = await fetch(`${BASE}/measurements/ott/weather?${query}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.message ?? res.statusText);
+  }
+  return res.json();
+}
+
+
 export async function fetchSeries(params: SeriesParams = {}): Promise<SeriesResponse> {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {

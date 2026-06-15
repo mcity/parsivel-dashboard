@@ -24,14 +24,18 @@ export function getWxCategory(code: number | null): WxCategory {
   return { label: `Code ${code}`, color: "#757575" };
 }
 
-// wxCode is reported independently of the rain accumulator and is often 0/absent
-// in the data. When a bucket actually measured precipitation, don't mislabel it
-// "Clear" — without a present-weather code we can't name the type, so fall back
-// to a generic "Precipitation" tag.
 export function categoryForPoint(p: SeriesPoint): WxCategory {
-  const measuredPrecip = (p.peakIntensity ?? 0) > 0 || p.rainMm > 0;
-  if ((p.wxCode === null || p.wxCode === 0) && measuredPrecip) {
-    return { label: "Precipitation (corrected)", color: "#00897b" };
-  }
   return getWxCategory(p.wxCode);
+}
+
+const CATEGORY_COLORS: Record<string, string> = Object.fromEntries(
+  [0, 51, 57, 61, 67, 71, 77, 87, 89].map(code => {
+    const { label, color } = getWxCategory(code);
+    return [label, color];
+  })
+);
+CATEGORY_COLORS["Precipitation (corrected)"] = "#00897b";
+
+export function colorForLabel(label: string): string {
+  return CATEGORY_COLORS[label] ?? "#757575";
 }

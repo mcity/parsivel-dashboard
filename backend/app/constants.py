@@ -32,6 +32,10 @@ SENSOR_STATUS_TEXT: dict[int, str] = {
 FILL_VALUE_FLOAT = -9.999
 MOR_CLEAR_VALUE = 20000  # MORvisibility value indicating clear / no precip
 RAIN_AMT_ROLLOVER_MM = 300.0  # rainAmt accumulator wraps back to 0 at this value
+# Slack (mm) below the 300 rollover when deciding whether a negative ΔrainAmt is a
+# genuine wrap vs. an accumulator reset: rainIntensity is a 1-minute average and
+# can under-account the rain over the gap, so allow a few mm near the boundary.
+WRAP_REACH_MARGIN_MM = 5.0
 
 # Columns that can be filtered/sorted — maps name to the SQLAlchemy column.
 FILTERABLE_COLUMNS = {
@@ -76,3 +80,15 @@ CSV_COLUMNS = [
 #   if (code === 89) return { label: "Hail", color: "#ff5722" };
 #   return { label: `Code ${code}`, color: "#757575" };
 # }
+
+WEATHER_CATEGORIES = [
+    ("Clear",            (0, 0)),
+    ("Drizzle",          (51, 53)),
+    ("Drizzle with rain",(57, 58)),
+    ("Rain",             (61, 63)),
+    ("Rain/snow mix",    (67, 68)),
+    ("Snow",             (71, 73)),
+    ("Snow grains",      (77, 77)),
+    ("Soft hail",        (87, 88)),
+    ("Hail",             (89 ,89)),
+]

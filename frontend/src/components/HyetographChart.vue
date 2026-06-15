@@ -38,6 +38,8 @@ ChartJS.register(
 const props = defineProps<{
   points: SeriesPoint[];
   bucketSeconds: number;
+  start?: string; // selected range start (ISO); pins the x-axis left edge
+  end?: string;   // selected range end (ISO); pins the x-axis right edge
 }>();
 
 // Points arrive pre-sorted and pre-aggregated from the server.
@@ -123,7 +125,7 @@ function toggleSeries(i: number) {
   chart.update();
 }
 
-const chartOptions = {
+const chartOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   interaction: {
@@ -160,6 +162,11 @@ const chartOptions = {
   scales: {
     x: {
       type: "time" as const,
+      // Pin the axis to the selected range so the chart's left edge is the
+      // chosen start, not the first bucket (which is floored and may sit
+      // before/after it). Omitted ("All") -> Chart.js auto-scales to the data.
+      min: props.start || undefined,
+      max: props.end || undefined,
       time: {
         tooltipFormat: "PPpp",
         displayFormats: {
@@ -196,7 +203,7 @@ const chartOptions = {
       beginAtZero: true,
     },
   },
-};
+}));
 </script>
 
 <template>

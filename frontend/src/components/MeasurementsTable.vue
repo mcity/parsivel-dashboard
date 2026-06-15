@@ -4,10 +4,12 @@ import {
   fetchMeasurements,
   fetchSeries,
   fetchLatest,
+  fetchWeather,
   buildCsvUrl,
   type Measurement,
   type MeasurementParams,
   type SeriesPoint,
+  type WeatherCategory,
 } from "../api";
 import HyetographChart from "./HyetographChart.vue";
 import WeatherFrequencyChart from "./WeatherFrequencyChart.vue";
@@ -111,6 +113,11 @@ const viewMode = ref<"table" | "chart">("chart");
 const chartSeries = ref<SeriesPoint[]>([]);
 const chartBucketSeconds = ref(0);
 const chartLoading = ref(false);
+const chartError = ref("");
+// The range the chart was last *loaded* with — pins the axis so it only moves
+// on apply, not while the user is still editing the date inputs.
+const chartStart = ref("");
+const chartEnd = ref("");
 
 const startInput = ref("");
 const endInput = ref("");
@@ -121,6 +128,10 @@ const latestTimestamp = ref("");
 const latestTimestampLabel = computed(() =>
   latestTimestamp.value ? new Date(latestTimestamp.value).toLocaleString() : ""
 );
+
+// weather catagories
+const weatherCats = ref<WeatherCategory[]>([]);
+
 
 async function loadLatestTimestamp() {
   try {
@@ -150,6 +161,7 @@ function formatDatetimeLocal(d: Date): string {
 }
 
 function applyPreset(preset: TimePreset) {
+  activePreset.value = preset.label; // keep the toggle highlighted for programmatic calls too
   if (preset.hours === null) {
     startInput.value = "";
     endInput.value = "";
@@ -221,6 +233,7 @@ async function loadData() {
 
   if (viewMode.value === "chart") {
     loadChartData();
+    loadWeatherData();
   }
 }
 
@@ -230,9 +243,12 @@ async function loadChartData() {
   // not applied here — they'd punch gaps in the accumulation; only the time
   // range narrows the chart.
   chartLoading.value = true;
+  chartError.value = "";
   try {
     const startIso = toIso(startInput.value);
     const endIso = toIso(endInput.value);
+    chartStart.value = startIso;
+    chartEnd.value = endIso;
     const data = await fetchSeries({
       ...(startIso ? { start: startIso } : {}),
       ...(endIso ? { end: endIso } : {}),
@@ -240,7 +256,7 @@ async function loadChartData() {
     chartSeries.value = data.points;
     chartBucketSeconds.value = data.bucketSeconds;
   } catch (e: any) {
-    error.value = e.message;
+    chartError.value = e.message;
     chartSeries.value = [];
     chartBucketSeconds.value = 0;
   } finally {
@@ -248,9 +264,25 @@ async function loadChartData() {
   }
 }
 
+async function loadWeatherData() {
+  try {
+    const startIso = toIso(startInput.value);
+    const endIso = toIso(endInput.value);
+    const data = await fetchWeather({
+      ...(startIso ? { start: startIso } : {}),
+      ...(endIso ? { end: endIso } : {}),
+    });
+    weatherCats.value = data.categories;
+  } catch (e: any) {
+    weatherCats.value = [];
+  }
+}
+
+
 watch(viewMode, (mode) => {
   if (mode === "chart") {
     loadChartData();
+    loadWeatherData();
   }
 });
 
@@ -277,8 +309,9 @@ function onOptionsUpdate() {
   loadData();
 }
 
-function restoreFromUrl() {
+function restoreFromUrl(): boolean {
   const q = readUrlParams();
+  const hasRange = q.has("start") || q.has("end");
 
   // Time filters
   if (q.has("start")) startInput.value = toDatetimeLocal(q.get("start")!);
@@ -307,12 +340,21 @@ function restoreFromUrl() {
       }
     }
   }
+
+  return hasRange;
 }
 
-onMounted(() => {
-  restoreFromUrl();
-  loadLatestTimestamp();
-  loadData();
+onMounted(async () => {
+  const hasRange = restoreFromUrl();
+  // The 30-day default anchors on the latest log, so wait for that timestamp
+  // before applying the preset (otherwise it'd fall back to the wall clock).
+  await loadLatestTimestamp();
+  if (hasRange) {
+    loadData();
+  } else {
+    // Default view: the last 30 days from the most recent measurement.
+    applyPreset(timePresets.find((p) => p.label === "30d")!);
+  }
 });
 </script>
 
@@ -373,6 +415,12 @@ onMounted(() => {
       v-model:items-per-page="pageSize"
       v-model:page="page"
       v-model:sort-by="sortBy"
+      :items-per-page-options="[
+        { value: 20,  title: '20' },
+        { value: 50,  title: '50' },
+        { value: 100, title: '100' },
+        { value: 200, title: '200' },
+      ]"
       :headers="headers"
       :items="items"
       :items-length="total"
@@ -427,10 +475,15 @@ onMounted(() => {
           <v-card-title class="text-subtitle-1">Hyetograph</v-card-title>
           <v-card-text>
             <v-progress-linear v-if="chartLoading" indeterminate color="primary" class="my-8" />
+            <v-alert v-else-if="chartError" type="warning" variant="tonal" density="compact">
+              {{ chartError }}
+            </v-alert>
             <HyetographChart
               v-else-if="chartSeries.length > 0"
               :points="chartSeries"
               :bucket-seconds="chartBucketSeconds"
+              :start="chartStart"
+              :end="chartEnd"
             />
             <div v-else class="text-medium-emphasis text-center py-8">
               No data available for the current filters.
@@ -442,14 +495,10 @@ onMounted(() => {
         <v-card class="fill-height d-flex flex-column" min-height="460">
           <v-card-title class="text-subtitle-1">Weather Distribution</v-card-title>
           <v-card-text class="flex-grow-1 d-flex flex-column">
-            <div v-if="chartSeries.length === 0" class="text-medium-emphasis text-center flex-grow-1 d-flex align-center justify-center">
+            <div v-if="weatherCats.length === 0" class="text-medium-emphasis text-center flex-grow-1 d-flex align-center justify-center">
               No data available for the current filters.
             </div>
-            <WeatherFrequencyChart
-              v-else
-              :points="chartSeries"
-              :bucket-seconds="chartBucketSeconds"
-            />
+            <WeatherFrequencyChart v-else :categories="weatherCats" />
           </v-card-text>
         </v-card>
       </v-col>
