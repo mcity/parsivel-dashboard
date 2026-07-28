@@ -1,11 +1,12 @@
 # parsivel-dashboard
 
-Flask REST template for a read-only viewer over an existing OTT Parsivel²
-disdrometer database (SQL Server). The Parsivel-specific table mappings,
-class-midpoint constants, and response schemas are wired up; routes are left
-as a single placeholder so this can serve as a starting point.
+A read-only dashboard for an OTT Parsivel² laser disdrometer. The sensor is
+outside the UMTRI building. It records one measurement each minute.
 
-The frontend is not built yet.
+The backend reads an existing SQL Server database with Flask and SQLAlchemy. It
+does not write to the database, and it runs no migrations. The frontend is a Vue
+3 and Vuetify application. It shows a landing page, a table of the measurements,
+a hyetograph, and a weather-type chart. You can also export the rows as CSV.
 
 ## Layout
 
@@ -13,107 +14,89 @@ The frontend is not built yet.
 parsivel-dashboard/
 ├── backend/
 │   ├── app/
-│   │   ├── __init__.py       # Flask create_app() factory
-│   │   ├── config.py         # Settings from env (DATABASE_URL, CORS_ORIGINS)
-│   │   ├── db.py             # SQLAlchemy engine + per-request session
-│   │   ├── constants.py      # OTT class midpoints, sensor-status text, fill values
-│   │   ├── models.py         # ORM mapping for existing tables (read-only)
-│   │   ├── schemas.py        # Pydantic response models (fill -> null)
+│   │   ├── __init__.py        # Flask create_app() factory
+│   │   ├── config.py          # Settings from .env
+│   │   ├── db.py              # Engine and per-request session
+│   │   ├── constants.py       # Class midpoints, status text, filter maps
+│   │   ├── models.py          # ORM mapping for the three tables
+│   │   ├── schemas.py         # Pydantic response models
 │   │   └── routes/
-│   │       └── example.py    # placeholder route: GET /api/example
-│   ├── tests/                # pytest, uses in-memory SQLite
-│   ├── wsgi.py               # gunicorn entrypoint
-│   ├── pyproject.toml
+│   │       └── measurements.py  # All /api endpoints
+│   ├── tests/                 # pytest, with in-memory SQLite
+│   ├── wsgi.py                # gunicorn entrypoint
 │   └── Dockerfile
+├── frontend/
+│   ├── index.html
+│   └── src/
+│       ├── api.ts             # Typed calls to the backend
+│       ├── router/            # "/" landing page, "/dashboard" the data
+│       ├── views/             # LandingPage, NotFound
+│       └── components/        # Table, charts, landing-page parts
 ├── docker-compose.yml
-├── .env.example
 └── README.md
 ```
 
-## What's in the template
+<!-- ## Tables
 
-Already wired:
+The app reads three tables. `cpuTimestamp` is the time axis in all of them. Do
+not use `parsivelTime`, because that clock is frequently wrong.
 
-- Flask app factory (`app/__init__.py`) with CORS and per-request DB session teardown.
-- SQLAlchemy 2.0 engine + `sessionmaker`, with a `SESSION_FACTORY` config hook for tests.
-- Pydantic-based settings (`DATABASE_URL`, `CORS_ORIGINS`) loaded from `.env`.
-- ORM mappings for `parsivel_OTT`, `parsivel_avg_ved`, `parsivel_avg_ps`.
-- Pydantic response schemas with fill-value (`-9.999`) nulling and decoded
-  sensor-status text.
-- One placeholder route — `GET /api/example` — showing the pattern
-  blueprint → session → model → schema → JSON.
-- Health probe at `GET /api/ping`.
-- pytest setup with in-memory SQLite via `StaticPool`, plus a working
-  integration test against the placeholder route.
-
-Not provided (intentionally — extend as needed):
-
-- Real business endpoints (measurements list, latest, health timeline, etc.).
-- Auth.
-- Frontend.
-
-## Mapped tables (read-only)
-
-| Table | Purpose |
+| Table | Contents |
 |---|---|
-| `parsivel_OTT` | One row per measurement (rain intensity, reflectivity, sensor status, …) |
-| `parsivel_avg_ved` | Number-density per diameter class (telegram field 90) |
-| `parsivel_avg_ps` | Average particle speed per diameter class (field 91) |
+| `parsivel_OTT` | One row for each measurement: rain rate, rain total, weather code, reflectivity, visibility, kinetic energy, housing temperature, laser amplitude, particle count, and sensor status. |
+| `parsivel_avg_ved` | Number density for each of the 32 diameter classes (telegram field 90). Unit: log10(1/(m³·mm)). Fill value: -9.999. |
+| `parsivel_avg_ps` | Average particle speed for each of the 32 diameter classes (telegram field 91). Unit: m/s. Fill value: 0. |
 
-`cpuTimestamp` is the authoritative time axis everywhere; `parsivelTime` is
-ignored because that clock is often unset.
+The column types in `app/models.py` are estimates. Compare them with the live
+database before you go to production. The app assumes the default SQL Server
+schema (`dbo`). If your login uses a different schema, add
+`__table_args__ = {"schema": "dbo"}` to each model. -->
 
-The column types in `app/models.py` are best-guess. Verify against the live
-database before going to production. The default SQL Server schema (`dbo`) is
-assumed — if the login uses a different default schema, add
-`__table_args__ = {"schema": "dbo"}` to each model.
+## Setup
 
-## Local dev (without Docker)
+You must have Python 3.12 or later, [uv](https://docs.astral.sh/uv/), Node.js
+20.19 or later, and Microsoft ODBC Driver 18 for SQL Server.
 
-Prereqs: Python 3.12+, [uv](https://docs.astral.sh/uv/), and Microsoft ODBC
-Driver 18 for SQL Server installed on the host.
+### 1. Make the environment file
 
-```bash
-cp .env.example .env
-# edit .env: set DATABASE_URL to your SQL Server instance
+Write a file `.env` in the root of the project:
 
-cd backend
-C:\Users\WWICGAA\.local\bin\uv.exe sync
-runas /netonly /user:UMROOT\billhong cmd
-cd C:\Users\WWICGAA\Documents\parsivel-dashboard\backend
-C:\Users\WWICGAA\.local\bin\uv.exe run flask --app wsgi run --debug --port 8000
-
-# seperate terminal
-cd frontend
-npm run dev
-# visit http://localhost:5173
-
-
-The server listens on `http://localhost:8000`.
-
-## Docker
-
-The provided Dockerfile installs ODBC Driver 18 inside the image, so you only
-need Docker on the host. Production server is gunicorn.
-
-```bash
-cp .env.example .env
-# edit .env
-
-docker compose up --build
+```
+DATABASE_URL= ...
+CORS_ORIGINS=http://localhost:5173
 ```
 
-The compose file mounts `./backend` and runs gunicorn with `--reload` for dev.
+Keep the secrets in `.env`. Do not commit this file.
 
-## Environment variables
+### 2. Start the backend
 
-| Var | Purpose |
-|---|---|
-| `DATABASE_URL` | SQLAlchemy URL, e.g. `mssql+pyodbc://user:pass@host:1433/db?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes` |
-| `CORS_ORIGINS` | Optional comma-separated origin list for the future frontend (e.g. `http://localhost:5173`) |
+```bash
+cd backend
+uv sync
+uv run flask --app wsgi run --debug --port 8000
+```
 
-Secrets must live in `.env` (never committed) or be injected by the
-orchestrator. The app is strictly read-only and runs no schema migrations.
+The backend listens on `http://localhost:8000`.
+
+If SQL Server uses Windows authentication, first start a shell with your domain
+account. Then run the two commands above in that shell.
+
+```
+runas /netonly /user:UMROOT\<user> cmd
+```
+
+### 3. Start the frontend
+
+Use a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. Vite sends all `/api` requests to port 8000, thus
+the backend must run at the same time.
 
 ## Tests
 
@@ -122,38 +105,15 @@ cd backend
 uv run pytest
 ```
 
-Tests use an in-memory SQLite database via a `SESSION_FACTORY` override on the
-Flask app config — no SQL Server needed. `pyodbc` is still installed as a
-runtime dependency.
+The tests use an in-memory SQLite database through a `SESSION_FACTORY` override
+on the Flask config. You do not need SQL Server to run them.
 
-## Adding a real route
+## Docker
 
-Follow the pattern in `app/routes/example.py`:
+The Dockerfile installs ODBC Driver 18 in the image, and gunicorn serves the
+app. The compose file starts the **backend only**. Start the frontend with
+`npm run dev`.
 
-```python
-from flask import Blueprint
-from sqlalchemy import select
-from app.db import get_session
-from app.models import ParsivelOTT
-from app.schemas import MeasurementOut
-
-bp = Blueprint("measurements", __name__, url_prefix="/api/measurements")
-
-
-@bp.get("/latest")
-def latest():
-    session = get_session()
-    row = session.scalars(
-        select(ParsivelOTT).order_by(ParsivelOTT.cpuTimestamp.desc()).limit(1)
-    ).first()
-    if row is None:
-        return {"error": "no rows"}, 404
-    return MeasurementOut.from_row(row).model_dump(mode="json")
-```
-
-Then register the blueprint in `app/__init__.py`:
-
-```python
-from app.routes import measurements
-app.register_blueprint(measurements.bp)
+```bash
+docker compose up --build
 ```
