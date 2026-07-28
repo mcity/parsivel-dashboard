@@ -8,6 +8,37 @@ does not write to the database, and it runs no migrations. The frontend is a Vue
 3 and Vuetify application. It shows a landing page, a table of the measurements,
 a hyetograph, and a weather-type chart. You can also export the rows as CSV.
 
+## Stack
+
+**Backend** — Python 3.12 or later, with [uv](https://docs.astral.sh/uv/) for
+the packages.
+
+| Part | Tool |
+|---|---|
+| Web framework | Flask 3 |
+| ORM | SQLAlchemy 2.0 |
+| Database | Microsoft SQL Server, through pyodbc and ODBC Driver 18 |
+| Validation and settings | Pydantic 2, pydantic-settings |
+| Cross-origin requests | Flask-CORS |
+| Production server | gunicorn |
+| Tests | pytest, with SQLite in memory |
+
+**Frontend** — Node.js 24 or later, with npm.
+
+| Part | Tool |
+|---|---|
+| Framework | Vue 3 (Composition API, `<script setup>`) |
+| Language | TypeScript |
+| Component library | Vuetify 4 |
+| Icons | Material Design Icons (`@mdi/font`) |
+| Routing | Vue Router 4 |
+| Charts | Chart.js 4, through vue-chartjs, with the date-fns adapter |
+| Build tool | Vite 8 |
+| Type checks | vue-tsc |
+
+The project uses no CSS framework. All the styles come from Vuetify and from
+scoped CSS in the components.
+
 ## Layout
 
 ```
@@ -54,8 +85,8 @@ schema (`dbo`). If your login uses a different schema, add
 
 ## Setup
 
-You must have Python 3.12 or later, [uv](https://docs.astral.sh/uv/), Node.js
-20.19 or later, and Microsoft ODBC Driver 18 for SQL Server.
+You must have Python 3.12 or later, [uv](https://docs.astral.sh/uv/), Node.js 24
+or later, and Microsoft ODBC Driver 18 for SQL Server.
 
 ### 1. Make the environment file
 
