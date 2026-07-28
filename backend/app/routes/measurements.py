@@ -10,20 +10,24 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import ColumnElement
 from sqlalchemy.types import DateTime, Integer
 
+from app.constants import (
+    CSV_COLUMNS,
+    FILL_VALUE_FLOAT,
+    FILTER_OPS,
+    FILTERABLE_COLUMNS,
+    RAIN_AMT_ROLLOVER_MM,
+    SENSOR_STATUS_TEXT,
+    WEATHER_CATEGORIES,
+    WRAP_REACH_MARGIN_MM,
+)
 from app.db import get_session
 from app.models import ParsivelOTT
-from app.schemas import MeasurementOut, MeasurementPage, SeriesOut, SeriesPoint, _nullify_fill
-
-from app.constants import (
-    FILTERABLE_COLUMNS,
-    FILTER_OPS,
-    CSV_COLUMNS,
-    MOR_CLEAR_VALUE,
-    RAIN_AMT_ROLLOVER_MM,
-    WRAP_REACH_MARGIN_MM,
-    FILL_VALUE_FLOAT,
-    SENSOR_STATUS_TEXT,
-    WEATHER_CATEGORIES
+from app.schemas import (
+    MeasurementOut,
+    MeasurementPage,
+    SeriesOut,
+    SeriesPoint,
+    _nullify_fill,
 )
 
 bp = Blueprint("measurements", __name__, url_prefix="/api")
@@ -348,7 +352,7 @@ def series_ott():
     ]
     return SeriesOut(bucketSeconds=bucket_seconds, points=points).model_dump(mode="json")
 
-# Endpoint: time-bucketed rainfall series for the hyetograph
+# Endpoint: time-bucketed weather code distr. graph
 @bp.get("/measurements/ott/weather")
 def weather_distr_ott():
     session = get_session()

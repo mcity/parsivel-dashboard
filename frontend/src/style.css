@@ -1,3 +1,15 @@
+/* Vuetify 4 resolves every text style through --v-font-body (headings fall back
+   to it), so this one variable sets the font for the whole app.
+   Vuetify's own default is Roboto, which this app never downloads — on Windows
+   that fell back silently to Arial. Below is the default system stack Tailwind
+   ships, and the exact stack stunningui.com uses: Segoe UI on Windows, San
+   Francisco on macOS, Roboto on Android. No web font is fetched. */
+:root {
+  --v-font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
 body {
   margin: 0;
 }

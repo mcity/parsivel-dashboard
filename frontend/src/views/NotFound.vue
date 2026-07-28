@@ -10,8 +10,8 @@
     <p class="text-h6 text-medium-emphasis mb-6">
       This page doesn’t exist.
     </p>
-    <v-btn color="primary" to="/" prepend-icon="mdi-view-dashboard">
-      Back to dashboard
+    <v-btn color="primary" to="/" prepend-icon="mdi-home-outline">
+      Back to home
     </v-btn>
   </v-container>
 </template>

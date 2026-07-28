@@ -31,9 +31,10 @@ function pushUrlParams(params: MeasurementParams) {
   window.history.replaceState({}, "", url.toString());
 }
 
+// Serial number is deliberately absent: one sensor feeds this table, so the
+// column is constant noise. It is still in the CSV export.
 const headers = [
   { title: "Timestamp", key: "cpuTimestamp", sortable: true },
-  { title: "Serial No.", key: "sensorSerNo", sortable: true },
   { title: "Rain Intensity (mm/h)", key: "rainIntensity", sortable: true },
   { title: "Rain Amount (mm)", key: "rainAmt", sortable: true },
   { title: "Wx Code (SYNOP)", key: "wxCode", sortable: true },
