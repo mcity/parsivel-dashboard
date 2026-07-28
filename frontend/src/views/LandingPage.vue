@@ -60,14 +60,14 @@ const features = [
               OTT Parsivel² &middot; laser disdrometer
             </div>
             <h1 class="text-h3 font-weight-medium mb-4">
-              Precipitation measurement archive
+              UMTRI precipitation measurement archive
             </h1>
             <p class="text-body-1 text-medium-emphasis mb-4">
               This dashboard reads and visualizes the measurement archive of an OTT Parsivel²
-              laser disdrometer. The sensor projects a flat laser sheet and
-              measures every particle that falls through it. 
+              laser disdrometer located outside the University of Michigan Transportation Research Institute (UMTRI) building. 
             </p>
             <p class="text-body-1 text-medium-emphasis mb-4">
+              The sensor projects a flat laser sheet and measures every particle that falls through it. 
               From the size and the speed of those particles it derives rain rate, accumulated
               rain, precipitation type, radar reflectivity, visibility, and
               kinetic energy. This data is then recorded at one minute intervals.

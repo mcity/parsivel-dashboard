@@ -13,7 +13,7 @@ import umtriLogo from "./assets/umtri-formal-white.png";
              the side padding of the page v-container below. -->
         <router-link to="/" class="brand ml-3" aria-label="Go to the home page">
           <v-img :src="logoUrl" width="40" height="40" alt="" />
-          <span class="brand-text">Parsivel Dashboard</span>
+          <span class="brand-text">UMTRI Parsivel Dashboard</span>
         </router-link>
       </template>
 
@@ -21,13 +21,7 @@ import umtriLogo from "./assets/umtri-formal-white.png";
         <!-- mr-3 (12px) + the toolbar's own 4px append margin = 16px, matching
              the inset on the left. A plain <img> rather than v-img: the logo is
              horizontal and its width follows its own aspect ratio. -->
-        <img
-          v-if="umtriLogo"
-          :src="umtriLogo"
-          alt="UMTRI"
-          class="org-logo mr-3"
-        />
-        <div v-else class="org-logo org-logo--empty mr-3">UMTRI logo</div>
+        <img :src="umtriLogo" alt="UMTRI" class="org-logo mr-3" />
       </template>
     </v-app-bar>
 
@@ -60,16 +54,5 @@ import umtriLogo from "./assets/umtri-formal-white.png";
   height: 32px;
   width: auto;
   display: block;
-}
-/* Stand-in until the file arrives. The dashed edge marks it as unfinished. */
-.org-logo--empty {
-  display: flex;
-  align-items: center;
-  padding-inline: 12px;
-  border: 1px dashed rgba(var(--v-theme-on-surface), 0.25);
-  border-radius: 4px;
-  font-size: 0.75rem;
-  white-space: nowrap;
-  color: rgba(var(--v-theme-on-surface), 0.5);
 }
 </style>
