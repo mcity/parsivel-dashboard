@@ -30,5 +30,11 @@ dist/
 build/
 *.egg
 
+# Data snapshot (baked into Docker image, not committed)
+backend/data/
+
 # Logs
 *.log
+
+# Keys
+*.pem

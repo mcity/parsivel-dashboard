@@ -344,7 +344,11 @@ def series_ott():
         SeriesPoint(
             bucket=r.bucket,
             rainMm=round(float(r.rain_mm or 0.0), 5),
-            peakIntensity=round(_nullify_fill(r.peak_intensity), 5),
+            peakIntensity=(
+                round(peak, 5)
+                if (peak := _nullify_fill(r.peak_intensity)) is not None
+                else None
+            ),
             wxCode=r.wx_code,
             cumulative=round(float(r.cumulative or 0.0), 5),
         )

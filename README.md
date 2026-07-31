@@ -148,3 +148,11 @@ app. The compose file starts the **backend only**. Start the frontend with
 ```bash
 docker compose up --build
 ```
+
+## Deployment
+
+See [DEPLOY.md](DEPLOY.md) for the demo deployment: a one-time snapshot of the
+database into SQLite (`backend/scripts/snapshot_to_sqlite.py`), a single
+production image that serves both the API and the built frontend (root
+`Dockerfile` + `docker-compose.prod.yml`), and the steps to run it on an EC2
+instance.

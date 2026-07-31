@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    image: parsivel-demo
+    ports:
+      - "80:8000"
+    environment:
+      DATABASE_URL: sqlite:////app/data/parsivel.db
+    restart: unless-stopped
