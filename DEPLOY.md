@@ -1,80 +1,70 @@
-# Demo deployment (AWS EC2, one-time data snapshot)
+# Deployment (AWS EC2 + twice-daily data push from campus)
 
-This deploys the dashboard as a **single Docker container** on one EC2 instance:
-
-- The Vue frontend is built and served by the Flask backend (same origin, so no
-  CORS and no frontend config changes).
-- The data is a **one-time snapshot** of the SQL Server database baked into the
-  image as a SQLite file — no database server in AWS, and the demo shows
-  non-live data.
-
-When live data is needed again later, point `DATABASE_URL` back at a credentialed
-SQL Server connection (the MSSQL code paths are untouched) and re-add the
-Microsoft ODBC driver install to the Dockerfile (see `backend/Dockerfile` for
-the original steps).
-
-## 1. Snapshot the data (once, on your Windows machine)
-
-Needs your Windows domain login, so run from a shell with domain credentials
-(same as running the backend locally):
+The dashboard runs as **one Docker container on one EC2 instance**. It reads a
+SQLite database on a Docker volume. The SQL Server is only
+reachable from the UM network, so a **scheduled task on a campus Windows PC**
+pushes new rows to the instance over SSH twice a day:
 
 ```
-runas /netonly /user:UMROOT\<your-user> cmd
-cd <repo>\backend
-uv run python scripts\snapshot_to_sqlite.py --server <host> --database <db>
+ campus Windows PC (Task Scheduler, 06:00 + 18:00)          EC2 instance
+ ┌──────────────────────────────────────────┐              ┌──────────────────────────────┐
+ │ scripts/sync_to_aws.py                   │   ssh/scp    │ container parsivel-demo      │
+ │  1. ask instance for watermark per table ├─────────────►│  scripts/ingest.py state     │
+ │  2. SELECT rows > watermark from SQL Srv │              │                              │
+ │     (as the read-only domain account)    │              │  /incoming/delta-*.db        │
+ │  3. scp delta file, run ingest import    ├─────────────►│  scripts/ingest.py import    │
+ └──────────────────────────────────────────┘              │   -> /app/data/parsivel.db   │
+                                                           │      (Docker volume)         │
+                                                           └──────────────────────────────┘
 ```
 
-(Any Python 3.12 environment with the backend dependencies works — a plain
-venv's `.venv\Scripts\python` in place of `uv run python` is fine.)
+- The job is stateless; a missed run is caught up by the next one.
+- Applying the same delta twice is harmless (rows above the watermark are
+  replaced, not duplicated).
+- Image updates never touch the data: the database lives on the
+  `parsivel-data` volume, not in the image.
 
-This writes `backend/data/parsivel.db` (all 5 tables + an index on
-`parsivel_OTT.cpuTimestamp`) and prints row counts. The file is gitignored.
+Files involved:
 
-## 2. Build and test locally (gate before deploying)
+| File | Runs on | Purpose |
+|---|---|---|
+| `backend/scripts/sync_to_aws.py` | campus PC | pull deltas from SQL Server, ship + apply over SSH |
+| `backend/scripts/mssql_source.py` | campus PC | SQL Server connection, domain-account impersonation, SQLite copy |
+| `backend/scripts/ingest.py` | container | `state` / `import` / `init` on the SQLite database (stdlib only) |
+| `backend/scripts/register_sync_task.ps1` | campus PC | create the Task Scheduler job |
+| `backend/scripts/snapshot_to_sqlite.py` | campus PC | full local copy (dev, or seeding) |
+| `backend/.sync.env` (from `.sync.env.example`) | campus PC | settings + the account password (gitignored) |
+| `Dockerfile`, `docker-compose.prod.yml` | build machine / instance | production image and service |
 
-```
-docker compose -f docker-compose.prod.yml up --build -d
-```
+## 1. EC2 instance (once)
 
-Then check `http://localhost` (port 80; if taken, change the mapping to
-`8080:8000` temporarily):
+- AMI Amazon Linux 2023, **t3.small**, 20 GB gp3 disk (the database is about
+  2.5 GB and grows roughly 1.5 MB/day).
+- Security group: TCP 80 from `0.0.0.0/0`; TCP 22 from the campus PC that
+  runs the sync **and** from any machine you deploy from.
+- Consider an Elastic IP so `PARSIVEL_SSH_HOST` never changes.
 
-- `http://localhost/api/ping` returns `{"status": "ok"}`
-- Landing page and dashboard render with snapshot data (charts populate)
-- Refresh the browser while on `/dashboard` (tests the SPA fallback)
-- Change date ranges/filters; download the CSV export
-- `docker compose -f docker-compose.prod.yml logs` shows no errors
-
-Stop with `docker compose -f docker-compose.prod.yml down`.
-
-## 3. Launch the EC2 instance (once)
-
-- AMI: Amazon Linux 2023, instance type **t3.small**, 20 GB gp3 disk
-- Security group: allow inbound TCP 80 from `0.0.0.0/0`, TCP 22 from your IP only
-- Create/download a key pair for SSH
-
-Install Docker on the instance:
+Install Docker and the compose plugin:
 
 ```
 sudo dnf install -y docker
 sudo systemctl enable --now docker
 sudo usermod -aG docker ec2-user
-# docker compose v2 plugin
 sudo mkdir -p /usr/local/lib/docker/cli-plugins
 sudo curl -sSL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
   -o /usr/local/lib/docker/cli-plugins/docker-compose
 sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+mkdir -p ~/incoming
 ```
 
-Log out/in (or `newgrp docker`) so the group change applies.
+Log out and in again so the group change applies.
 
-## 4. Ship the image and run it
+## 2. Build and ship the image
 
-On your machine (PowerShell), export the image built in step 2 and copy it up
-(no ECR/registry needed). **Note:** if your machine builds ARM images (it
-shouldn't on x86 Windows), build with `--platform linux/amd64`.
+On your machine (Docker Desktop running), from the repo root:
 
 ```
+docker compose -f docker-compose.prod.yml build
 docker save parsivel-demo -o parsivel-demo.tar
 scp -i <key.pem> parsivel-demo.tar docker-compose.prod.yml ec2-user@<ec2-ip>:~
 ```
@@ -84,19 +74,104 @@ On the instance:
 ```
 docker load -i parsivel-demo.tar
 docker compose -f docker-compose.prod.yml up -d
+rm parsivel-demo.tar
 ```
 
-(`build: .` in the compose file is ignored as long as the `parsivel-demo`
-image is already loaded and you don't pass `--build`.)
+`build: .` in the compose file is ignored as long as the image is already
+loaded and you do not pass `--build`. The image has no data in it, so this
+is a few hundred MB.
 
-Demo URL: **http://\<ec2-public-ip\>** — plain HTTP, fine for a temporary demo.
+## 3. Seed the data volume (once)
 
-## 5. Updating the demo
+The container starts with an empty volume. Fill it one of two ways.
 
-Rebuild locally (e.g. after re-running the snapshot), then repeat step 4.
-On the instance, `docker compose -f docker-compose.prod.yml up -d` again after
-`docker load` — compose replaces the running container.
+**a) From the previous snapshot container** (fastest, if the old
+`parsivel-demo` image with the baked-in database is still running):
+
+```
+docker ps                                            # note the old container name
+docker cp <old-container>:/app/data/parsivel.db ~/parsivel.db   # 2.5 GB, check `df -h`
+docker load -i parsivel-demo.tar
+docker compose -f docker-compose.prod.yml up -d      # replaces the old container
+docker cp ~/parsivel.db parsivel-demo:/app/data/parsivel.db
+docker exec parsivel-demo python scripts/ingest.py init          # WAL + indexes
+docker compose -f docker-compose.prod.yml restart
+rm ~/parsivel.db
+docker image prune -f
+```
+
+**b) Full load from SQL Server**, from the campus PC once step 4 is set up.
+This pulls every table again and copies about 2.5 GB up:
+
+```
+.venv\Scripts\python scripts\sync_to_aws.py --full
+```
+
+Either way, the first normal sync run afterwards brings the data up to date.
+
+## 4. The campus sync PC (once)
+
+Requirements: Windows, Python 3.12+, **Microsoft ODBC Driver 18 for SQL
+Server**, the built-in OpenSSH client (`ssh`/`scp` in `C:\Windows\System32\OpenSSH`),
+network access to the SQL Server on port 1433, and outbound SSH to the instance.
+
+Only the `backend` folder is needed on this PC (without `.venv`, `data`,
+`logs`, `app`, `tests`), plus the `.pem` key. Copying it on a USB stick works.
+
+```
+cd <copy>\backend
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements-sync.txt
+copy .sync.env.example .sync.env
+```
+
+Edit `.sync.env`: set `PARSIVEL_SQL_PASSWORD`, `PARSIVEL_SSH_HOST` and the
+path to the `.pem` key. The read-only account is a **Windows domain
+account**, so the script logs in the way `runas /netonly` does, in
+process; the PC does not need to be domain-joined and the task can run as
+any local user. (If the PC *is* domain-joined and the task runs as the
+service account itself, leave `PARSIVEL_SQL_USER` empty.)
+
+Test in stages:
+
+```
+.venv\Scripts\python scripts\sync_to_aws.py --dry-run   # SQL Server + SSH state only, no upload
+.venv\Scripts\python scripts\sync_to_aws.py             # real push
+```
+
+Then register the scheduled task (asks for your Windows password once so it
+can run while you are logged off):
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\register_sync_task.ps1
+```
+
+Defaults: 06:00 and 18:00 local, log in `backend\logs\sync.log`, missed runs
+start as soon as the PC is back on. Keep the times away from 01:00–02:00:
+`cpuTimestamp` is local time and repeats that hour on the November DST
+change, and the watermark is `cpuTimestamp`. To change the schedule:
+`register_sync_task.ps1 -Times 05:00,17:00`. To also run once about two
+minutes after every boot: add `-AtStartup`. To remove the task:
+`register_sync_task.ps1 -Unregister`.
+
+## 5. Day to day
+
+- **Is it working?** The dashboard toolbar shows "Data synced <time>", the
+  moment of the last successful run (also at `/api/sync/status`). A run that
+  finds nothing new still updates it, so a stale value means the task is not
+  running. For detail, `Get-Content backend\logs\sync.log -Tail 20` on the PC,
+  or on the instance `docker exec parsivel-demo python scripts/ingest.py state`
+  shows the newest timestamp per table.
+- **Run a sync by hand:** `Start-ScheduledTask -TaskName "Parsivel dashboard sync"`,
+  or run the Python command from step 4.
+- **Update the app:** rebuild, ship, `docker load`, `compose up -d`. The volume
+  is untouched.
+- **Rebuild the data from scratch:** `sync_to_aws.py --full`.
+- **Disk:** `df -h` on the instance. Leftover files in `~/incoming` mean an
+  import failed mid-way; the log on the PC has the error, and re-running the
+  sync is safe.
 
 ## Teardown
 
-Terminate the EC2 instance. Nothing else was created in AWS.
+Terminate the EC2 instance and unregister the scheduled task on the PC.
+Nothing else was created in AWS.

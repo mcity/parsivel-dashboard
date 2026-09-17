@@ -113,7 +113,7 @@ If SQL Server uses Windows authentication, first start a shell with your domain
 account. Then run the two commands above in that shell.
 
 ```
-runas /netonly /user:UMROOT\<user> cmd
+runas /netonly /user:<DOMAIN>\<user> cmd
 ```
 
 ### 3. Start the frontend
@@ -151,8 +151,10 @@ docker compose up --build
 
 ## Deployment
 
-See [DEPLOY.md](DEPLOY.md) for the demo deployment: a one-time snapshot of the
-database into SQLite (`backend/scripts/snapshot_to_sqlite.py`), a single
-production image that serves both the API and the built frontend (root
-`Dockerfile` + `docker-compose.prod.yml`), and the steps to run it on an EC2
-instance.
+See [DEPLOY.md](DEPLOY.md). The app runs as a single production image (root
+`Dockerfile` + `docker-compose.prod.yml`) on an EC2 instance, serving both the
+API and the built frontend from a SQLite database on a Docker volume. Because
+the SQL Server is only reachable on campus, a scheduled task on a campus
+Windows PC (`backend/scripts/sync_to_aws.py`) pushes new rows to the instance
+over SSH twice a day; `backend/scripts/ingest.py` applies them inside the
+container.

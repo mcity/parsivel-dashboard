@@ -4,6 +4,7 @@ import {
   fetchMeasurements,
   fetchSeries,
   fetchLatest,
+  fetchSyncStatus,
   fetchWeather,
   buildCsvUrl,
   type Measurement,
@@ -139,6 +140,21 @@ async function loadLatestTimestamp() {
     latestTimestamp.value = (await fetchLatest()).cpuTimestamp ?? "";
   } catch {
     latestTimestamp.value = "";
+  }
+}
+
+// When the deployed data was last copied from the sensor's database. Empty
+// when the API reads SQL Server directly, in which case the line is hidden.
+const lastSyncAt = ref("");
+const lastSyncLabel = computed(() =>
+  lastSyncAt.value ? new Date(lastSyncAt.value).toLocaleString() : ""
+);
+
+async function loadSyncStatus() {
+  try {
+    lastSyncAt.value = (await fetchSyncStatus()).lastSyncAt ?? "";
+  } catch {
+    lastSyncAt.value = "";
   }
 }
 
@@ -350,6 +366,7 @@ onMounted(async () => {
   // The 30-day default anchors on the latest log, so wait for that timestamp
   // before applying the preset (otherwise it'd fall back to the wall clock).
   await loadLatestTimestamp();
+  loadSyncStatus();
   if (hasRange) {
     loadData();
   } else {
@@ -390,6 +407,10 @@ onMounted(async () => {
         </v-btn>
       </v-col>
       <v-spacer />
+      <v-col v-if="lastSyncLabel" cols="auto" class="text-medium-emphasis text-body-2 d-inline-flex align-center">
+        <v-icon icon="mdi-sync" size="small" class="mr-1" />
+        Data synced {{ lastSyncLabel }}
+      </v-col>
       <v-col cols="auto" class="text-medium-emphasis text-body-2">
         {{ total.toLocaleString() }} results
       </v-col>

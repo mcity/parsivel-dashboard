@@ -11,6 +11,7 @@ dependencies = [
     "pyodbc>=5.1",
     "pydantic>=2.7",
     "pydantic-settings>=2.4",
+    "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [dependency-groups]

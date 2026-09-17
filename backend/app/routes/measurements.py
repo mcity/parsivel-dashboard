@@ -5,7 +5,8 @@ import io
 from datetime import datetime
 
 from flask import Blueprint, Response, abort, request
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import ColumnElement
 from sqlalchemy.types import DateTime, Integer
@@ -393,6 +394,24 @@ def weather_distr_ott():
         #     })
         
     return {"categories": results}
+
+# Endpoint: when the deployed copy of the data was last synced from SQL Server.
+# The sync job (scripts/ingest.py) appends to `_sync_log`; when the API reads
+# SQL Server directly there is no such table, and lastSyncAt is null.
+@bp.get("/sync/status")
+def sync_status():
+    session = get_session()
+    try:
+        row = session.execute(
+            text("SELECT synced_at, rows_inserted FROM _sync_log ORDER BY id DESC LIMIT 1")
+        ).first()
+    except DBAPIError:
+        session.rollback()
+        row = None
+    if row is None:
+        return {"lastSyncAt": None, "rowsInserted": None}
+    return {"lastSyncAt": row[0], "rowsInserted": row[1]}
+
 
 # Endpoint: CSV exporter from query
 @bp.get("/measurements/ott/csv")

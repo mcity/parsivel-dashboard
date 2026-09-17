@@ -112,6 +112,23 @@ export async function fetchMeasurements(
   return res.json();
 }
 
+// When the deployed database was last synced from the sensor's SQL Server.
+// lastSyncAt is an ISO 8601 UTC timestamp, or null when the API reads SQL
+// Server directly (no sync step).
+export interface SyncStatus {
+  lastSyncAt: string | null;
+  rowsInserted: number | null;
+}
+
+export async function fetchSyncStatus(): Promise<SyncStatus> {
+  const res = await fetch(`${BASE}/sync/status`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.message ?? res.statusText);
+  }
+  return res.json();
+}
+
 export async function fetchLatest(): Promise<Measurement> {
   const res = await fetch(`${BASE}/measurements/ott/latest`);
   if (!res.ok) {

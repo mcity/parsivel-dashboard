@@ -2,8 +2,17 @@ services:
   app:
     build: .
     image: parsivel-demo
+    container_name: parsivel-demo
     ports:
       - "80:8000"
     environment:
       DATABASE_URL: sqlite:////app/data/parsivel.db
+    volumes:
+      # Live SQLite database; survives image updates. Seed it once (DEPLOY.md).
+      - parsivel-data:/app/data
+      # Drop zone for delta files uploaded by sync_to_aws.py (mkdir ~/incoming first).
+      - ./incoming:/incoming
     restart: unless-stopped
+
+volumes:
+  parsivel-data:

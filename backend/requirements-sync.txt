@@ -1,0 +1,4 @@
+# Only what scripts/sync_to_aws.py needs on the campus sync PC.
+# Install with:  .venv\Scripts\python -m pip install -r requirements-sync.txt
+pyodbc>=5.1
+pywin32>=306; sys_platform == "win32"

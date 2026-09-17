@@ -13,6 +13,7 @@ venv/
 
 # Env
 .env
+backend/.sync.env
 .env.local
 .env.*.local
 
@@ -35,6 +36,7 @@ backend/data/
 
 # Logs
 *.log
+backend/logs/
 
 # Keys
 *.pem
