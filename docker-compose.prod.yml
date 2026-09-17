@@ -1,10 +1,15 @@
+# Production stack: the app container plus Caddy in front for HTTPS.
+# Set SITE_DOMAIN in a `.env` file next to this compose file on the instance
+# (e.g. SITE_DOMAIN=example.org); unset, Caddy serves https://localhost with a
+# self-signed certificate, which is fine for a local smoke test.
+
 services:
   app:
     build: .
     image: parsivel-demo
     container_name: parsivel-demo
-    ports:
-      - "80:8000"
+    expose:
+      - "8000"
     environment:
       DATABASE_URL: sqlite:////app/data/parsivel.db
     volumes:
@@ -14,5 +19,26 @@ services:
       - ./incoming:/incoming
     restart: unless-stopped
 
+  caddy:
+    image: caddy:2
+    container_name: parsivel-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account; must persist or Let's Encrypt rate
+      # limits bite after a few recreations.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
 volumes:
   parsivel-data:
+  caddy-data:
+  caddy-config:

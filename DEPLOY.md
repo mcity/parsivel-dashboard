@@ -40,9 +40,10 @@ Files involved:
 
 - AMI Amazon Linux 2023, **t3.small**, 20 GB gp3 disk (the database is about
   2.5 GB and grows roughly 1.5 MB/day).
-- Security group: TCP 80 from `0.0.0.0/0`; TCP 22 from the campus PC that
-  runs the sync **and** from any machine you deploy from.
-- Consider an Elastic IP so `PARSIVEL_SSH_HOST` never changes.
+- Security group: TCP 80 and 443 from `0.0.0.0/0`; TCP 22 from the campus
+  PC that runs the sync **and** from any machine you deploy from.
+- An Elastic IP, so the address survives stop/start, and a DNS name (A
+  records for the apex and `www`) pointing at it. HTTPS needs the name.
 
 Install Docker and the compose plugin:
 
@@ -66,10 +67,16 @@ On your machine (Docker Desktop running), from the repo root:
 ```
 docker compose -f docker-compose.prod.yml build
 docker save parsivel-demo -o parsivel-demo.tar
-scp -i <key.pem> parsivel-demo.tar docker-compose.prod.yml ec2-user@<ec2-ip>:~
+scp -i <key.pem> parsivel-demo.tar docker-compose.prod.yml Caddyfile ec2-user@<ec2-ip>:~
 ```
 
-On the instance:
+On the instance, once, tell Caddy which name to get a certificate for:
+
+```
+echo "SITE_DOMAIN=example.org" > ~/.env      # your domain, no www
+```
+
+Then (every deploy):
 
 ```
 docker load -i parsivel-demo.tar
@@ -80,6 +87,15 @@ rm parsivel-demo.tar
 `build: .` in the compose file is ignored as long as the image is already
 loaded and you do not pass `--build`. The image has no data in it, so this
 is a few hundred MB.
+
+**HTTPS** is handled by the `caddy` service in the compose file: it owns
+ports 80 and 443, requests a Let's Encrypt certificate for `SITE_DOMAIN` on
+first start (DNS must already resolve to the instance and port 80/443 must
+be open), renews it automatically, and forwards to the app container.
+Plain HTTP and the `www` name redirect to `https://<domain>`. Certificates
+live on the `caddy-data` volume; do not delete it, or Let's Encrypt's
+rate limits can lock you out for a week after a few re-issues. Check with
+`docker logs parsivel-caddy` and `curl -I https://<domain>/api/ping`.
 
 ## 3. Seed the data volume (once)
 
@@ -170,6 +186,13 @@ minutes after every boot: add `-AtStartup`. To remove the task:
 - **Disk:** `df -h` on the instance. Leftover files in `~/incoming` mean an
   import failed mid-way; the log on the PC has the error, and re-running the
   sync is safe.
+- **The instance's public IP changed** (after a stop/start or a rebuild;
+  a crash or reboot keeps it): the sync logs `ssh failed ... timed out`
+  and the dashboard's "Data synced" time stops advancing. Update
+  `PARSIVEL_SSH_HOST` in `.sync.env` on the sync PC; nothing else changes.
+  An Elastic IP avoids this entirely. After a full rebuild the SSH host key
+  also changes, and `ssh` refuses the "changed" key: remove the old line
+  for that host from `C:\Users\<you>\.ssh\known_hosts` on the sync PC.
 
 ## Teardown
 

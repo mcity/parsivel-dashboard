@@ -1,0 +1,20 @@
+# Reverse proxy in front of the app container (see docker-compose.prod.yml).
+# Caddy obtains and renews the Let's Encrypt certificate for SITE_DOMAIN by
+# itself; nothing to install on the host. With SITE_DOMAIN unset (local
+# testing) it serves https://localhost with a self-signed certificate.
+
+# Anything arriving over plain HTTP, on either name or the raw IP, goes to
+# the canonical HTTPS address. (ACME challenges are handled before this.)
+http:// {
+	redir https://{$SITE_DOMAIN}{uri} permanent
+}
+
+# www -> apex
+www.{$SITE_DOMAIN} {
+	redir https://{$SITE_DOMAIN}{uri} permanent
+}
+
+{$SITE_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8000
+}
